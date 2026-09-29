@@ -212,6 +212,7 @@ local function test_files(files, opts)
     else
       summary.status = "Finished"
       set_winbar(winid, summary)
+      vim.cmd.stopinsert()
     end
   end)
 end
