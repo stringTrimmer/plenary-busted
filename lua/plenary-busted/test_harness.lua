@@ -38,11 +38,23 @@ local function find_test_files(directory)
   return test_files
 end
 
+---Create buf and window as specified
+---@param win_config vim.api.keyset.win_config
+---@return integer bufnr
+---@return integer win_id
+local function open_win(win_config)
+
+  local bufnr = api.nvim_create_buf(false, true)
+  local win_id = api.nvim_open_win(bufnr, true, win_config)
+  return bufnr, win_id
+end
+
 --- Create window that takes up certain percentags of the current screen.
 ---@param col_range number # center the window taking up this percentage of the screen.
 ---@param row_range number # center the window taking up this percentage of the screen.
 local function open_floating_window(col_range, row_range)
-  local win_opts = {
+  return open_win(
+  {
     relative = "editor",
     row = math.ceil(vim.o.lines * (1 - row_range) / 2),
     col = math.floor(vim.o.columns * (1 - col_range) / 2),
@@ -51,11 +63,7 @@ local function open_floating_window(col_range, row_range)
     title = " BustedTest ",
     title_pos = "center",
     style = "minimal",
-  }
-
-  local bufnr = api.nvim_create_buf(false, true)
-  local win_id = api.nvim_open_win(bufnr, true, win_opts)
-  return bufnr, win_id
+  })
 end
 
 ---@param winid integer
@@ -66,12 +74,21 @@ local function set_winbar(winid, summary)
   table.insert(winbar, string.format(" %%#PlenaryBustedGreen# Success: %d %%* ", summary.pass))
   table.insert(winbar, string.format(" %%#PlenaryBustedRed# Failed: %d %%* ", summary.fail))
   table.insert(winbar, string.format(" %%#PlenaryBustedRed# Errors: %d %%* ", summary.errs))
-  api.nvim_set_option_value("winbar", table.concat(winbar, ""), { win = winid })
+  api.nvim_set_option_value("winbar", table.concat(winbar, ""), { win = winid, scope = 'local' })
   api.nvim__redraw({ win = winid, winbar = true })
 end
 
+---@class plenary_busted.test_harness.opts
+---@field nvim_cmd? string
+---@field keep_going? boolean
+---@field timeout? integer
+---@field win_config? vim.api.keyset.win_config
+---@field init? string
+---@field minimal? boolean
+---@field minimal_init? string
+
 ---@param files string[]
----@param opts? table
+---@param opts? plenary_busted.test_harness.opts
 local function test_files(files, opts)
   if #files == 0 then
     vim.notify("No test files found.", vim.log.levels.WARN)
@@ -94,16 +111,20 @@ local function test_files(files, opts)
   local summary = { status = "Running ", pass = 0, fail = 0, errs = 0 }
 
   if not HEADLESS then
-    bufnr, winid = open_floating_window(0.8, 0.7)
+    if opts.win_config then
+      bufnr, winid = open_win(opts.win_config)  
+    else
+      bufnr, winid = open_floating_window(0.8, 0.7)
+    end
     local job_id = api.nvim_open_term(bufnr, {})
     outputter = nvim_outputter(job_id)
 
-    api.nvim_buf_set_keymap(bufnr, "n", "q", ":q<CR>", { silent = true })
+    api.nvim_buf_set_keymap(bufnr, "n", "q", "<Cmd>close<CR>", { silent = true })
 
     api.nvim_set_option_value("winhl", "WinBar:Normal", { win = winid })
     api.nvim_set_option_value("conceallevel", 3, { win = winid })
     api.nvim_set_option_value("concealcursor", "n", { win = winid })
-    api.nvim_set_option_value("filetype", "PlenaryBustedPopup", { buf = bufnr })
+    api.nvim_set_option_value("filetype", "PlenaryBustedResults", { buf = bufnr })
     set_winbar(winid, summary)
   end
 
@@ -191,12 +212,13 @@ local function test_files(files, opts)
     else
       summary.status = "Finished"
       set_winbar(winid, summary)
+      vim.cmd.stopinsert()
     end
   end)
 end
 
 ---@param path string
----@param opts? table
+---@param opts? plenary_busted.test_harness.opts
 function M.test(path, opts)
   if fn.isdirectory(path) == 1 then
     local files = find_test_files(path)
